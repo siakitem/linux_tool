@@ -57,6 +57,8 @@ SOFTWARE_LIST=(
     "vim"
     "curl"
     "wget"
+    "netcat-openbsd"
+    "git"
 )
 
 log_info "即将安装的软件列表: ${SOFTWARE_LIST[*]}"
@@ -74,15 +76,19 @@ done
 log_info "正在为 Vim 配置中文支持..."
 VIMRC_FILE="$HOME/.vimrc"
 
-# 备份原配置（如果存在）
-if [ -f "$VIMRC_FILE" ]; then
-    cp "$VIMRC_FILE" "${VIMRC_FILE}.bak.$(date +%F_%T)"
-    log_info "已备份原 .vimrc 文件。"
-fi
-
-# 写入新配置
-cat >> "$VIMRC_FILE" <<EOF
-
+# 检查是否已配置
+if [ -f "$VIMRC_FILE" ] && grep -q "Added by init_debian.sh" "$VIMRC_FILE"; then
+    log_warn "Vim 中文配置已存在，跳过。"
+else
+    # 备份原配置（如果存在）
+    if [ -f "$VIMRC_FILE" ]; then
+        cp "$VIMRC_FILE" "${VIMRC_FILE}.bak.$(date +%F_%T)"
+        log_info "已备份原 .vimrc 文件。"
+    fi
+    
+    # 写入新配置
+    cat >> "$VIMRC_FILE" <<EOF
+    
 " --- Added by init_debian.sh for Chinese Support ---
 set encoding=utf-8
 set fileencodings=ucs-bom,utf-8,gb18030,gbk,gb2312,cp936,big5,euc-jp,euc-kr,latin1
@@ -90,7 +96,31 @@ set termencoding=utf-8
 " ---------------------------------------------------
 EOF
 
-log_info "Vim 中文配置已写入到 $VIMRC_FILE"
+    log_info "Vim 中文配置已写入到 $VIMRC_FILE"
+fi
+
+
+
+
+# 检查网络连通性函数
+check_domain() {
+    local domain=$1
+    local port=${2:-443}
+    
+    # 简单的参数校验
+    if [ -z "$domain" ]; then
+        return 0
+    fi
+
+    log_info "正在检查网络连通性: $domain:$port"
+    if nc -vz -w 5 "$domain" "$port" &> /dev/null; then
+        log_info "网络通畅: $domain"
+    else
+        log_error "网络不可达: $domain (端口: $port)"
+        log_error "请检查网络连接或更换 Docker 源。"
+        exit 1
+    fi
+}
 
 # 步骤 3: 安装 Docker
 echo -e "\n----------------------------------------"
@@ -104,21 +134,32 @@ PROTOCOL="http"                                   # 协议
 INSTALL_LATEST="true"
 CLOSE_FIREWALL="false"
 
-log_info "正在下载并执行 Docker 安装脚本..."
-log_info "Docker CE 源: $DOCKER_SOURCE"
-log_info "镜像仓库加速: $DOCKER_REGISTRY"
-
-# 执行无人值守安装
-bash <(curl -sSL https://linuxmirrors.cn/docker.sh) \
-    --source "$DOCKER_SOURCE" \
-    --source-registry "$DOCKER_REGISTRY" \
-    --protocol "$PROTOCOL" \
-    --use-intranet-source false \
-    --install-latest "$INSTALL_LATEST" \
-    --close-firewall "$CLOSE_FIREWALL" \
-    --clean-screen false \
-    --pure-mode \
-    --ignore-backup-tips
+if command -v docker &> /dev/null; then
+    log_warn "Docker 似乎已安装，跳过安装步骤。"
+else
+    log_info "正在下载并执行 Docker 安装脚本..."
+    log_info "Docker CE 源: $DOCKER_SOURCE"
+    log_info "镜像仓库加速: $DOCKER_REGISTRY"
+    
+    # 解析并检查 DOCKER_SOURCE 的域名 (去除路径)
+    SOURCE_DOMAIN=$(echo "$DOCKER_SOURCE" | cut -d'/' -f1)
+    
+    # 检查官方源/镜像源连通性
+    check_domain "$SOURCE_DOMAIN"
+    check_domain "$DOCKER_REGISTRY"
+    
+    # 执行无人值守安装
+    bash <(curl -sSL https://linuxmirrors.cn/docker.sh) \
+        --source "$DOCKER_SOURCE" \
+        --source-registry "$DOCKER_REGISTRY" \
+        --protocol "$PROTOCOL" \
+        --use-intranet-source false \
+        --install-latest "$INSTALL_LATEST" \
+        --close-firewall "$CLOSE_FIREWALL" \
+        --clean-screen false \
+        --pure-mode \
+        --ignore-backup-tips
+fi
 
 log_info "Docker 安装流程结束。"
 
